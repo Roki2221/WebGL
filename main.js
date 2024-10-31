@@ -5,7 +5,6 @@ let surface;                    // A surface model
 let shProgram;                  // A shader program
 let spaceball;                  // A SimpleRotator object that lets the user rotate the view by mouse.
 
-
 // Constructor
 function ShaderProgram(name, program) {
 
@@ -18,6 +17,14 @@ function ShaderProgram(name, program) {
     this.iColor = -1;
     // Location of the uniform matrix representing the combined transformation.
     this.iModelViewProjectionMatrix = -1;
+    // Location of the uniform matrix representing the modelview transformation
+    this.iModelViewMatrix = -1;
+    // Location of the TMU0
+    this.iTMU0 = -1;
+    // Location of the TMU1
+    this.iTMU1 = -1;
+    // Location of the TMU2
+    this.iTMU2 = -1;
 
     this.Use = function() {
         gl.useProgram(this.prog);
@@ -49,10 +56,14 @@ function draw() {
        combined transformation matrix, and send that to the shader program. */
     let modelViewProjection = m4.multiply(projection, matAccum1 );
 
+    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matAccum1 );
     gl.uniformMatrix4fv(shProgram.iModelViewProjectionMatrix, false, modelViewProjection );
     
     /* Draw the six faces of a cube, with different colors. */
     gl.uniform4fv(shProgram.iColor, [1,1,0,1] );
+
+    gl.uniform1i(shProgram.iTMU0, 0);
+    gl.uniform1i(shProgram.iTMU1, 1);
 
     surface.Draw();
 }
@@ -67,15 +78,23 @@ function initGL() {
     shProgram.Use();
 
     shProgram.iAttribVertex              = gl.getAttribLocation(prog, "vertex");
+    shProgram.iAttribTexCoords           = gl.getAttribLocation(prog, "tex");
     shProgram.iModelViewProjectionMatrix = gl.getUniformLocation(prog, "ModelViewProjectionMatrix");
+    shProgram.iModelViewMatrix           = gl.getUniformLocation(prog, "ModelViewMatrix");
     shProgram.iColor                     = gl.getUniformLocation(prog, "color");
+    shProgram.iTMU0                      = gl.getUniformLocation(prog, "iTMU0");
+    shProgram.iTMU1                      = gl.getUniformLocation(prog, "iTMU1");
+    shProgram.iTMU2                      = gl.getUniformLocation(prog, "iTMU2");
 
     let data = {};
     
     CreateSurfaceData(data)
 
     surface = new Model('Surface');
-    surface.BufferData(data.verticesF32, data.indicesU16);
+    surface.BufferData(data.verticesF32, data.indicesU16, data.texcoordsF32);
+
+    surface.idTextureDiffuse  = LoadTexture("https://webglfundamentals.org/webgl/resources/f-texture.png");
+    surface.idTextureSpecular = LoadTexture("https://webglfundamentals.org/webgl/resources/keyboard.jpg");
 
     gl.enable(gl.DEPTH_TEST);
 }
