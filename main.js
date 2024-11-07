@@ -11,8 +11,10 @@ function ShaderProgram(name, program) {
     this.name = name;
     this.prog = program;
 
-    // Location of the attribute variable in the shader program.
+    // Location of the vertex attribute variable in the shader program.
     this.iAttribVertex = -1;
+    // Location of the texture coordinate attribute variable in the shader program.
+    this.iAttribTexCoords = -1;
     // Location of the uniform specifying a color for the primitive.
     this.iColor = -1;
     // Location of the uniform matrix representing the combined transformation.
