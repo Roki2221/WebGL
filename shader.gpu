@@ -1,24 +1,37 @@
-
-
-// Vertex shader
-const vertexShaderSource = `
+// Vertex Shader
 attribute vec3 vertex;
+attribute vec3 normal;
 uniform mat4 ModelViewProjectionMatrix;
-
+uniform mat4 ModelViewMatrix;
+uniform mat3 NormalMatrix;
+varying vec3 fragNormal;
+varying vec3 fragPosition;
 void main() {
-    gl_Position = ModelViewProjectionMatrix * vec4(vertex,1.0);
-}`;
+  fragPosition = (ModelViewMatrix * vec4(vertex, 1.0)).xyz;
+  fragNormal = normalize(NormalMatrix * normal);
+  gl_Position = ModelViewProjectionMatrix * vec4(vertex, 1.0);
+}
 
-
-// Fragment shader
-const fragmentShaderSource = `
-#ifdef GL_FRAGMENT_PRECISION_HIGH
-   precision highp float;
-#else
-   precision mediump float;
-#endif
-
-uniform vec4 color;
+// Fragment Shader
+precision mediump float;
+varying vec3 fragNormal;
+varying vec3 fragPosition;
+uniform vec3 lightPosition;
+uniform vec3 Ka, Kd, Ks;
+uniform float shininess;
 void main() {
-    gl_FragColor = color;
-}`;
+  vec3 N = normalize(fragNormal);
+  vec3 L = normalize(lightPosition - fragPosition);
+  vec3 V = normalize(-fragPosition);
+  vec3 R = reflect(-L, N);
+
+  float NdotL = max(dot(N, L), 0.0);
+  float RdotV = pow(max(dot(R, V), 0.0), shininess);
+
+  vec3 ambient = Ka;
+  vec3 diffuse = Kd * NdotL;
+  vec3 specular = Ks * RdotV;
+
+  vec3 color = ambient + diffuse + specular;
+  gl_FragColor = vec4(color, 1.0);
+}
