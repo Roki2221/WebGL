@@ -1,166 +1,241 @@
-'use strict';
+// Refactored main.js for Texture Rendering
+"use strict";
+import Model from "./Model.js";
 
-let gl;                         // The webgl context.
-let surface;                    // A surface model
-let shProgram;                  // A shader program
-let spaceball;                  // A SimpleRotator object that lets the user rotate the view by mouse.
+let gl;
+let surface;
+let shProgram;
+let spaceball;
+let textures = {};
 
-// Constructor
 function ShaderProgram(name, program) {
+  this.name = name;
+  this.prog = program;
 
-    this.name = name;
-    this.prog = program;
+  // Attribute and uniform locations
+  this.iAttribVertex = gl.getAttribLocation(program, "vertex");
+  this.iAttribNormal = gl.getAttribLocation(program, "normal");
+  this.iAttribTexCoord = gl.getAttribLocation(program, "texCoord");
+  this.iModelViewProjectionMatrix = gl.getUniformLocation(
+    program,
+    "ModelViewProjectionMatrix"
+  );
+  this.iModelViewMatrix = gl.getUniformLocation(program, "ModelViewMatrix");
+  this.iNormalMatrix = gl.getUniformLocation(program, "NormalMatrix");
+  this.iLightPosition = gl.getUniformLocation(program, "lightPosition");
+  this.iDiffuseTexture = gl.getUniformLocation(program, "diffuseTexture");
+  this.iSpecularTexture = gl.getUniformLocation(program, "specularTexture");
+  this.iNormalTexture = gl.getUniformLocation(program, "normalTexture");
 
-    // Location of the vertex attribute variable in the shader program.
-    this.iAttribVertex = -1;
-    // Location of the texture coordinate attribute variable in the shader program.
-    this.iAttribTexCoords = -1;
-    // Location of the uniform specifying a color for the primitive.
-    this.iColor = -1;
-    // Location of the uniform matrix representing the combined transformation.
-    this.iModelViewProjectionMatrix = -1;
-    // Location of the uniform matrix representing the modelview transformation
-    this.iModelViewMatrix = -1;
-    // Location of the TMU0
-    this.iTMU0 = -1;
-    // Location of the TMU1
-    this.iTMU1 = -1;
-    // Location of the TMU2
-    this.iTMU2 = -1;
+  this.Use = function () {
+    gl.useProgram(this.prog);
+  };
+}
 
-    this.Use = function() {
-        gl.useProgram(this.prog);
+function loadTexture(gl, url) {
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+
+  // Set default 1x1 pixel placeholder
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    1,
+    1,
+    0,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    new Uint8Array([0, 0, 255, 255])
+  );
+
+  const image = new Image();
+  image.src = url;
+  image.onload = () => {
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+
+    // Check if the image is NPOT
+    if (
+      (image.width & (image.width - 1)) !== 0 ||
+      (image.height & (image.height - 1)) !== 0
+    ) {
+      // Set parameters for NPOT textures
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    } else {
+      // Generate mipmaps for POT textures
+      gl.generateMipmap(gl.TEXTURE_2D);
     }
+  };
+
+  return texture;
 }
 
+function draw() {
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-/* Draws a colored cube, along with a set of coordinate axes.
- * (Note that the use of the above drawPrimitive function is not an efficient
- * way to draw with WebGL.  Here, the geometry is so simple that it doesn't matter.)
- */
-function draw() { 
-    gl.clearColor(0,0,0,1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    
-    /* Set the values of the projection transformation */
-    let projection = m4.perspective(Math.PI/8, 1, 8, 12); 
-    
-    /* Get the view matrix from the SimpleRotator object.*/
-    let modelView = spaceball.getViewMatrix();
+  let projection = m4.perspective(Math.PI / 8, 1, 8, 50);
+  let modelView = spaceball.getViewMatrix();
+  modelView = m4.multiply(m4.translation(0, 0, -15), modelView);
 
-    let rotateToPointZero = m4.axisRotation([0.707,0.707,0], 0.7);
-    let translateToPointZero = m4.translation(0,0,-10);
+  let lightPosition = [5.0, 4.0, 5.0];
+  let lightEye = m4.transformPoint(modelView, lightPosition);
 
-    let matAccum0 = m4.multiply(rotateToPointZero, modelView );
-    let matAccum1 = m4.multiply(translateToPointZero, matAccum0 );
-        
-    /* Multiply the projection matrix times the modelview matrix to give the
-       combined transformation matrix, and send that to the shader program. */
-    let modelViewProjection = m4.multiply(projection, matAccum1 );
+  let modelViewProjection = m4.multiply(projection, modelView);
+  let normalMatrix = m4.transpose(m4.inverse(modelView));
+  let normalMatrix3 = [
+    normalMatrix[0],
+    normalMatrix[1],
+    normalMatrix[2],
+    normalMatrix[4],
+    normalMatrix[5],
+    normalMatrix[6],
+    normalMatrix[8],
+    normalMatrix[9],
+    normalMatrix[10],
+  ];
 
-    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matAccum1 );
-    gl.uniformMatrix4fv(shProgram.iModelViewProjectionMatrix, false, modelViewProjection );
-    
-    /* Draw the six faces of a cube, with different colors. */
-    gl.uniform4fv(shProgram.iColor, [1,1,0,1] );
+  shProgram.Use();
+  gl.uniformMatrix4fv(
+    shProgram.iModelViewProjectionMatrix,
+    false,
+    modelViewProjection
+  );
+  gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, modelView);
+  gl.uniformMatrix3fv(shProgram.iNormalMatrix, false, normalMatrix3);
+  gl.uniform3fv(shProgram.iLightPosition, lightEye);
 
-    gl.uniform1i(shProgram.iTMU0, 0);
-    gl.uniform1i(shProgram.iTMU1, 1);
+  // Bind textures
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, textures.diffuse);
+  gl.uniform1i(shProgram.iDiffuseTexture, 0);
 
-    surface.Draw();
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, textures.specular);
+  gl.uniform1i(shProgram.iSpecularTexture, 1);
+
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, textures.normal);
+  gl.uniform1i(shProgram.iNormalTexture, 2);
+
+  surface.draw(shProgram);
+
+  requestAnimationFrame(draw);
 }
 
-
-
-/* Initialize the WebGL context. Called from init() */
 function initGL() {
-    let prog = createProgram( gl, vertexShaderSource, fragmentShaderSource );
+  const vertexShaderSource = `// Vertex Shader
+    attribute vec3 vertex;
+    attribute vec3 normal;
+    attribute vec2 texCoord;
+    uniform mat4 ModelViewProjectionMatrix;
+    uniform mat4 ModelViewMatrix;
+    uniform mat3 NormalMatrix;
+    varying vec3 fragNormal;
+    varying vec3 fragPosition;
+    varying vec2 fragTexCoord;
+    void main() {
+      fragPosition = (ModelViewMatrix * vec4(vertex, 1.0)).xyz;
+      fragNormal = normalize(NormalMatrix * normal);
+      fragTexCoord = texCoord;
+      gl_Position = ModelViewProjectionMatrix * vec4(vertex, 1.0);
+    }`;
 
-    shProgram = new ShaderProgram('Basic', prog);
-    shProgram.Use();
+  const fragmentShaderSource = `// Fragment Shader
+    precision mediump float;
+    varying vec3 fragNormal;
+    varying vec3 fragPosition;
+    varying vec2 fragTexCoord;
+    uniform vec3 lightPosition;
+    uniform sampler2D diffuseTexture;
+    uniform sampler2D specularTexture;
+    uniform sampler2D normalTexture;
+    void main() {
+      vec3 normalMap = texture2D(normalTexture, fragTexCoord).rgb * 2.0 - 1.0;
+      vec3 N = normalize(normalMap);
+      vec3 L = normalize(lightPosition - fragPosition);
+      vec3 V = normalize(-fragPosition);
+      vec3 R = reflect(-L, N);
 
-    shProgram.iAttribVertex              = gl.getAttribLocation(prog, "vertex");
-    shProgram.iAttribTexCoords           = gl.getAttribLocation(prog, "tex");
-    shProgram.iModelViewProjectionMatrix = gl.getUniformLocation(prog, "ModelViewProjectionMatrix");
-    shProgram.iModelViewMatrix           = gl.getUniformLocation(prog, "ModelViewMatrix");
-    shProgram.iColor                     = gl.getUniformLocation(prog, "color");
-    shProgram.iTMU0                      = gl.getUniformLocation(prog, "iTMU0");
-    shProgram.iTMU1                      = gl.getUniformLocation(prog, "iTMU1");
-    shProgram.iTMU2                      = gl.getUniformLocation(prog, "iTMU2");
+      vec3 diffuseColor = texture2D(diffuseTexture, fragTexCoord).rgb;
+      vec3 specularColor = texture2D(specularTexture, fragTexCoord).rgb;
 
-    let data = {};
-    
-    CreateSurfaceData(data)
+      float NdotL = max(dot(N, L), 0.0);
+      float RdotV = pow(max(dot(R, V), 0.0), 50.0);
 
-    surface = new Model('Surface');
-    surface.BufferData(data.verticesF32, data.indicesU16, data.texcoordsF32);
+      vec3 diffuse = diffuseColor * NdotL;
+      vec3 specular = specularColor * RdotV;
+      vec3 color = diffuse + specular;
+      gl_FragColor = vec4(color, 1.0);
+    }`;
 
-    surface.idTextureDiffuse  = LoadTexture("https://webglfundamentals.org/webgl/resources/f-texture.png");
-    surface.idTextureSpecular = LoadTexture("https://webglfundamentals.org/webgl/resources/keyboard.jpg");
+  const prog = createProgram(gl, vertexShaderSource, fragmentShaderSource);
+  shProgram = new ShaderProgram("TextureShading", prog);
 
-    gl.enable(gl.DEPTH_TEST);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+
+  // Load textures
+  textures.diffuse = loadTexture(gl, "textures/diffuse.jpg");
+  textures.specular = loadTexture(gl, "textures/specular.jpg");
+  textures.normal = loadTexture(gl, "textures/normal.jpg");
+
+  surface.init();
+}
+function createProgram(gl, vShaderSource, fShaderSource) {
+  const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vertexShader, vShaderSource);
+  gl.compileShader(vertexShader);
+  if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+    console.error(
+      "Vertex shader compilation error:",
+      gl.getShaderInfoLog(vertexShader)
+    );
+    gl.deleteShader(vertexShader);
+    return null;
+  }
+
+  const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fragmentShader, fShaderSource);
+  gl.compileShader(fragmentShader);
+  if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+    console.error(
+      "Fragment shader compilation error:",
+      gl.getShaderInfoLog(fragmentShader)
+    );
+    gl.deleteShader(fragmentShader);
+    return null;
+  }
+
+  const program = gl.createProgram();
+  gl.attachShader(program, vertexShader);
+  gl.attachShader(program, fragmentShader);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.error("Program link error:", gl.getProgramInfoLog(program));
+    gl.deleteProgram(program);
+    return null;
+  }
+
+  return program;
 }
 
-
-/* Creates a program for use in the WebGL context gl, and returns the
- * identifier for that program.  If an error occurs while compiling or
- * linking the program, an exception of type Error is thrown.  The error
- * string contains the compilation or linking error.  If no error occurs,
- * the program identifier is the return value of the function.
- * The second and third parameters are strings that contain the
- * source code for the vertex shader and for the fragment shader.
- */
-function createProgram(gl, vShader, fShader) {
-    let vsh = gl.createShader( gl.VERTEX_SHADER );
-    gl.shaderSource(vsh,vShader);
-    gl.compileShader(vsh);
-    if ( ! gl.getShaderParameter(vsh, gl.COMPILE_STATUS) ) {
-        throw new Error("Error in vertex shader:  " + gl.getShaderInfoLog(vsh));
-     }
-    let fsh = gl.createShader( gl.FRAGMENT_SHADER );
-    gl.shaderSource(fsh, fShader);
-    gl.compileShader(fsh);
-    if ( ! gl.getShaderParameter(fsh, gl.COMPILE_STATUS) ) {
-       throw new Error("Error in fragment shader:  " + gl.getShaderInfoLog(fsh));
-    }
-    let prog = gl.createProgram();
-    gl.attachShader(prog,vsh);
-    gl.attachShader(prog, fsh);
-    gl.linkProgram(prog);
-    if ( ! gl.getProgramParameter( prog, gl.LINK_STATUS) ) {
-       throw new Error("Link error in program:  " + gl.getProgramInfoLog(prog));
-    }
-    return prog;
-}
-
-
-/**
- * initialization function that will be called when the page has loaded
- */
 function init() {
-    let canvas;
-    try {
-        canvas = document.getElementById("webglcanvas");
-        gl = canvas.getContext("webgl");
-        if ( ! gl ) {
-            throw "Browser does not support WebGL";
-        }
-    }
-    catch (e) {
-        document.getElementById("canvas-holder").innerHTML =
-            "<p>Sorry, could not get a WebGL graphics context.</p>";
-        return;
-    }
-    try {
-        initGL();  // initialize the WebGL graphics context
-    }
-    catch (e) {
-        document.getElementById("canvas-holder").innerHTML =
-            "<p>Sorry, could not initialize the WebGL graphics context: " + e + "</p>";
-        return;
-    }
+  const canvas = document.getElementById("webglcanvas");
+  gl = canvas.getContext("webgl");
+  if (!gl) {
+    console.error("WebGL not supported");
+    return;
+  }
 
-    spaceball = new TrackballRotator(canvas, draw, 0);
+  spaceball = new TrackballRotator(canvas, null, 0);
 
-    draw();
+  surface = new Model(gl, 70, 70, 4, 2, 1);
+  initGL();
+  draw();
 }
+
+document.addEventListener("DOMContentLoaded", init);
