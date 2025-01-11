@@ -1,4 +1,3 @@
-// Refactored main.js for Texture Rendering
 "use strict";
 import Model from "./Model.js";
 
@@ -8,25 +7,31 @@ let shProgram;
 let spaceball;
 let textures = {};
 
+let uCenter = 0.5,
+  vCenter = 0.5; // Texture transformation center
+let scale = 1.0,
+  rotation = 0.0; // Texture scaling and rotation factors
+
 function ShaderProgram(name, program) {
   this.name = name;
   this.prog = program;
 
   // Attribute and uniform locations
-  this.iAttribVertex = gl.getAttribLocation(program, "vertex");
   this.iAttribNormal = gl.getAttribLocation(program, "normal");
   this.iAttribTexCoord = gl.getAttribLocation(program, "texCoord");
+  this.iAttribVertex = gl.getAttribLocation(program, "vertex");
+  this.iAttribTexCoord = gl.getAttribLocation(program, "tex");
   this.iModelViewProjectionMatrix = gl.getUniformLocation(
     program,
     "ModelViewProjectionMatrix"
   );
+  this.iTextureMatrix = gl.getUniformLocation(program, "TextureMatrix");
   this.iModelViewMatrix = gl.getUniformLocation(program, "ModelViewMatrix");
   this.iNormalMatrix = gl.getUniformLocation(program, "NormalMatrix");
   this.iLightPosition = gl.getUniformLocation(program, "lightPosition");
   this.iDiffuseTexture = gl.getUniformLocation(program, "diffuseTexture");
   this.iSpecularTexture = gl.getUniformLocation(program, "specularTexture");
   this.iNormalTexture = gl.getUniformLocation(program, "normalTexture");
-
   this.Use = function () {
     gl.useProgram(this.prog);
   };
@@ -36,7 +41,7 @@ function loadTexture(gl, url) {
   const texture = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, texture);
 
-  // Set default 1x1 pixel placeholder
+  // Set a default 1x1 blue pixel as a placeholder
   gl.texImage2D(
     gl.TEXTURE_2D,
     0,
@@ -60,17 +65,62 @@ function loadTexture(gl, url) {
       (image.width & (image.width - 1)) !== 0 ||
       (image.height & (image.height - 1)) !== 0
     ) {
-      // Set parameters for NPOT textures
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     } else {
-      // Generate mipmaps for POT textures
       gl.generateMipmap(gl.TEXTURE_2D);
     }
   };
 
   return texture;
+}
+
+function updateTextureMatrix() {
+  const cosR = Math.cos(rotation);
+  const sinR = Math.sin(rotation);
+
+  return [
+    scale * cosR,
+    scale * sinR,
+    0.0,
+    -scale * sinR,
+    scale * cosR,
+    0.0,
+    uCenter * (1 - scale * cosR) - vCenter * scale * sinR,
+    vCenter * (1 - scale * cosR) + uCenter * scale * sinR,
+    1.0,
+  ];
+}
+
+function handleKeyboard(event) {
+  const step = 0.05;
+  switch (event.key) {
+    case "a":
+      uCenter -= step;
+      break;
+    case "d":
+      uCenter += step;
+      break;
+    case "w":
+      vCenter -= step;
+      break;
+    case "s":
+      vCenter += step;
+      break;
+    case "q":
+      scale *= 1.1;
+      break;
+    case "e":
+      scale /= 1.1;
+      break;
+    case "z":
+      rotation += Math.PI / 16;
+      break;
+    case "c":
+      rotation -= Math.PI / 16;
+      break;
+  }
 }
 
 function draw() {
@@ -81,22 +131,7 @@ function draw() {
   let modelView = spaceball.getViewMatrix();
   modelView = m4.multiply(m4.translation(0, 0, -15), modelView);
 
-  let lightPosition = [5.0, 4.0, 5.0];
-  let lightEye = m4.transformPoint(modelView, lightPosition);
-
   let modelViewProjection = m4.multiply(projection, modelView);
-  let normalMatrix = m4.transpose(m4.inverse(modelView));
-  let normalMatrix3 = [
-    normalMatrix[0],
-    normalMatrix[1],
-    normalMatrix[2],
-    normalMatrix[4],
-    normalMatrix[5],
-    normalMatrix[6],
-    normalMatrix[8],
-    normalMatrix[9],
-    normalMatrix[10],
-  ];
 
   shProgram.Use();
   gl.uniformMatrix4fv(
@@ -104,22 +139,12 @@ function draw() {
     false,
     modelViewProjection
   );
-  gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, modelView);
-  gl.uniformMatrix3fv(shProgram.iNormalMatrix, false, normalMatrix3);
-  gl.uniform3fv(shProgram.iLightPosition, lightEye);
 
-  // Bind textures
+  const textureMatrix = updateTextureMatrix();
+  gl.uniformMatrix3fv(shProgram.iTextureMatrix, false, textureMatrix);
+
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, textures.diffuse);
-  gl.uniform1i(shProgram.iDiffuseTexture, 0);
-
-  gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, textures.specular);
-  gl.uniform1i(shProgram.iSpecularTexture, 1);
-
-  gl.activeTexture(gl.TEXTURE2);
-  gl.bindTexture(gl.TEXTURE_2D, textures.normal);
-  gl.uniform1i(shProgram.iNormalTexture, 2);
 
   surface.draw(shProgram);
 
@@ -129,62 +154,35 @@ function draw() {
 function initGL() {
   const vertexShaderSource = `// Vertex Shader
     attribute vec3 vertex;
-    attribute vec3 normal;
-    attribute vec2 texCoord;
+    attribute vec2 tex;
     uniform mat4 ModelViewProjectionMatrix;
-    uniform mat4 ModelViewMatrix;
-    uniform mat3 NormalMatrix;
-    varying vec3 fragNormal;
-    varying vec3 fragPosition;
-    varying vec2 fragTexCoord;
+    uniform mat3 TextureMatrix;
+    varying vec2 vTexCoord;
     void main() {
-      fragPosition = (ModelViewMatrix * vec4(vertex, 1.0)).xyz;
-      fragNormal = normalize(NormalMatrix * normal);
-      fragTexCoord = texCoord;
+      vec3 transformedTex = TextureMatrix * vec3(tex, 1.0);
+      vTexCoord = transformedTex.xy;
       gl_Position = ModelViewProjectionMatrix * vec4(vertex, 1.0);
     }`;
 
   const fragmentShaderSource = `// Fragment Shader
     precision mediump float;
-    varying vec3 fragNormal;
-    varying vec3 fragPosition;
-    varying vec2 fragTexCoord;
-    uniform vec3 lightPosition;
-    uniform sampler2D diffuseTexture;
-    uniform sampler2D specularTexture;
-    uniform sampler2D normalTexture;
+    varying vec2 vTexCoord;
+    uniform sampler2D iTMU0;
     void main() {
-      vec3 normalMap = texture2D(normalTexture, fragTexCoord).rgb * 2.0 - 1.0;
-      vec3 N = normalize(normalMap);
-      vec3 L = normalize(lightPosition - fragPosition);
-      vec3 V = normalize(-fragPosition);
-      vec3 R = reflect(-L, N);
-
-      vec3 diffuseColor = texture2D(diffuseTexture, fragTexCoord).rgb;
-      vec3 specularColor = texture2D(specularTexture, fragTexCoord).rgb;
-
-      float NdotL = max(dot(N, L), 0.0);
-      float RdotV = pow(max(dot(R, V), 0.0), 50.0);
-
-      vec3 diffuse = diffuseColor * NdotL;
-      vec3 specular = specularColor * RdotV;
-      vec3 color = diffuse + specular;
-      gl_FragColor = vec4(color, 1.0);
+      gl_FragColor = texture2D(iTMU0, vTexCoord);
     }`;
 
   const prog = createProgram(gl, vertexShaderSource, fragmentShaderSource);
-  shProgram = new ShaderProgram("TextureShading", prog);
+  shProgram = new ShaderProgram("TextureTransform", prog);
 
   gl.enable(gl.DEPTH_TEST);
   gl.depthFunc(gl.LEQUAL);
 
-  // Load textures
   textures.diffuse = loadTexture(gl, "textures/diffuse.jpg");
-  textures.specular = loadTexture(gl, "textures/specular.jpg");
-  textures.normal = loadTexture(gl, "textures/normal.jpg");
 
   surface.init();
 }
+
 function createProgram(gl, vShaderSource, fShaderSource) {
   const vertexShader = gl.createShader(gl.VERTEX_SHADER);
   gl.shaderSource(vertexShader, vShaderSource);
@@ -238,4 +236,5 @@ function init() {
   draw();
 }
 
+document.addEventListener("keydown", handleKeyboard);
 document.addEventListener("DOMContentLoaded", init);
